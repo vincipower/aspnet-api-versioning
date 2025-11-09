@@ -1,0 +1,278 @@
+@page "/"
+@implements IAsyncDisposable
+
+<h1 class="mb-3">Snake</h1>
+
+<div class="row g-4 align-items-start">
+    <div class="col-auto">
+        <div class="game-wrapper" tabindex="0" @ref="_gameSurface" @onkeydown="HandleKeyDown">
+            @for (var y = 0; y < BoardSize; y++)
+            {
+                <div class="row-cell">
+                    @for (var x = 0; x < BoardSize; x++)
+                    {
+                        var position = new Position(x, y);
+                        var cssClass = GetCellCssClass(position);
+                        <div class="cell @cssClass"></div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+    <div class="col">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h2 class="card-title h4">Scoreboard</h2>
+                <p class="lead mb-1">Score : <strong>@Score</strong></p>
+                <p class="mb-3">Longueur : <strong>@Snake.Count</strong></p>
+                @if (IsGameOver)
+                {
+                    <div class="alert alert-warning" role="alert">
+                        Partie terminée ! Appuyez sur « Rejouer » pour relancer.
+                    </div>
+                }
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary" @onclick="StartGame">Rejouer</button>
+                    <button class="btn btn-outline-secondary" @onclick="TogglePause" disabled="@(!IsGameRunning && !IsPaused)">
+                        @(IsPaused ? "Continuer" : "Pause")
+                    </button>
+                </div>
+                <p class="mt-3 text-muted">Utilisez les flèches du clavier ou ZQSD pour diriger le serpent.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const int BoardSize = 20;
+    private readonly Random _random = new();
+
+    private List<Position> Snake { get; set; } = new();
+    private Position Food { get; set; }
+    private Direction CurrentDirection { get; set; } = Direction.Right;
+    private Direction _pendingDirection = Direction.Right;
+    private bool IsGameRunning { get; set; }
+    private bool IsPaused { get; set; }
+    private bool IsGameOver { get; set; }
+    private int Score { get; set; }
+    private CancellationTokenSource? _loopCancellation;
+    private ElementReference _gameSurface;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            StartGame();
+            await FocusSurfaceAsync();
+        }
+    }
+
+    private void StartGame()
+    {
+        _loopCancellation?.Cancel();
+        _loopCancellation?.Dispose();
+        _loopCancellation = new CancellationTokenSource();
+
+        Snake = new List<Position>
+        {
+            new(BoardSize / 2, BoardSize / 2),
+            new(BoardSize / 2 - 1, BoardSize / 2),
+            new(BoardSize / 2 - 2, BoardSize / 2)
+        };
+
+        CurrentDirection = Direction.Right;
+        _pendingDirection = Direction.Right;
+        Score = 0;
+        IsPaused = false;
+        IsGameOver = false;
+        IsGameRunning = true;
+
+        SpawnFood();
+        _ = RunGameLoopAsync(_loopCancellation.Token);
+        _ = FocusSurfaceAsync();
+    }
+
+    private async Task RunGameLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(GetCurrentSpeed(), cancellationToken);
+
+                await InvokeAsync(() =>
+                {
+                    if (!IsGameRunning || IsPaused)
+                    {
+                        return;
+                    }
+
+                    CurrentDirection = _pendingDirection;
+                    AdvanceSnake();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void AdvanceSnake()
+    {
+        var head = Snake[0];
+        var next = CurrentDirection switch
+        {
+            Direction.Up => head with { Y = head.Y - 1 },
+            Direction.Down => head with { Y = head.Y + 1 },
+            Direction.Left => head with { X = head.X - 1 },
+            Direction.Right => head with { X = head.X + 1 },
+            _ => head
+        };
+
+        if (IsCollision(next))
+        {
+            EndGame();
+            return;
+        }
+
+        Snake.Insert(0, next);
+
+        if (next == Food)
+        {
+            Score += 10;
+            SpawnFood();
+        }
+        else
+        {
+            Snake.RemoveAt(Snake.Count - 1);
+        }
+    }
+
+    private void EndGame()
+    {
+        IsGameRunning = false;
+        IsGameOver = true;
+    }
+
+    private void TogglePause()
+    {
+        if (!IsGameRunning)
+        {
+            return;
+        }
+
+        IsPaused = !IsPaused;
+    }
+
+    private int GetCurrentSpeed() => Math.Max(60, 180 - Snake.Count * 3);
+
+    private bool IsCollision(Position next)
+    {
+        if (next.X < 0 || next.Y < 0 || next.X >= BoardSize || next.Y >= BoardSize)
+        {
+            return true;
+        }
+
+        return Snake.Contains(next);
+    }
+
+    private void SpawnFood()
+    {
+        Position candidate;
+
+        do
+        {
+            candidate = new Position(_random.Next(BoardSize), _random.Next(BoardSize));
+        }
+        while (Snake.Contains(candidate));
+
+        Food = candidate;
+    }
+
+    private string GetCellCssClass(in Position position)
+    {
+        if (position == Snake[0])
+        {
+            return "snake-head";
+        }
+
+        if (Snake.Contains(position))
+        {
+            return "snake-body";
+        }
+
+        if (position == Food)
+        {
+            return "food";
+        }
+
+        return string.Empty;
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (!IsGameRunning || IsPaused)
+        {
+            return;
+        }
+
+        var requested = args.Key switch
+        {
+            "ArrowUp" or "w" or "W" or "z" or "Z" => Direction.Up,
+            "ArrowDown" or "s" or "S" => Direction.Down,
+            "ArrowLeft" or "a" or "A" or "q" or "Q" => Direction.Left,
+            "ArrowRight" or "d" or "D" => Direction.Right,
+            _ => _pendingDirection
+        };
+
+        if (IsOpposite(requested, CurrentDirection))
+        {
+            return;
+        }
+
+        _pendingDirection = requested;
+    }
+
+    private static bool IsOpposite(Direction direction, Direction other) =>
+        (direction, other) switch
+        {
+            (Direction.Up, Direction.Down) => true,
+            (Direction.Down, Direction.Up) => true,
+            (Direction.Left, Direction.Right) => true,
+            (Direction.Right, Direction.Left) => true,
+            _ => false
+        };
+
+    private async Task FocusSurfaceAsync()
+    {
+        try
+        {
+            await Task.Delay(50);
+            await InvokeAsync(() => _gameSurface.FocusAsync());
+        }
+        catch (InvalidOperationException)
+        {
+            // L'élément peut ne pas être rendu lorsqu'on redémarre la partie très rapidement.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_loopCancellation is not null)
+        {
+            await _loopCancellation.CancelAsync();
+            _loopCancellation.Dispose();
+        }
+    }
+
+    private record struct Position(int X, int Y);
+
+    private enum Direction
+    {
+        Up,
+        Down,
+        Left,
+        Right
+    }
+}
