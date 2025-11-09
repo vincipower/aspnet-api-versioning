@@ -1,0 +1,9 @@
+.page {
+    display: flex;
+    justify-content: center;
+}
+
+.content {
+    max-width: 960px;
+    width: 100%;
+}

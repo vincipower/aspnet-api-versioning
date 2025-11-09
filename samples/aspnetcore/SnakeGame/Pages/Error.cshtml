@@ -1,0 +1,17 @@
+@page
+@model SnakeGame.Pages.ErrorModel
+@{
+    ViewData["Title"] = "Erreur";
+}
+
+<h1 class="text-danger">Oups !</h1>
+<h2 class="text-muted">Une erreur inattendue est survenue.</h2>
+
+@if (Model.ShowRequestId)
+{
+    <p>
+        <strong>Identifiant de la requête :</strong> <code>@Model.RequestId</code>
+    </p>
+}
+
+<p>Réessayez dans quelques instants ou contactez l'administrateur si le problème persiste.</p>
